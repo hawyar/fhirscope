@@ -11,7 +11,6 @@ type Context int
 type Operation int
 
 const (
-	// declare with iota so that the values are auto incremented
 	PatientContext Context = iota
 	UserContext
 	SystemContext
@@ -21,6 +20,8 @@ const (
 	UpdateOperation
 	DeleteOperation
 	SearchOperation
+
+	Wildcard = "*"
 )
 
 type Scope struct {
@@ -31,10 +32,12 @@ type Scope struct {
 }
 
 func main() {
-	version := "0.0.1"
+	v := "0.0.1"
 	usage := `Usage:
-fhirscope <scope>
-e.g. fhirscope patient/Observation.rs
+  fhirscope <scope>
+  Example: 
+  	  fhirscope patient/Observation.rs
+	  fhirscope system/*.cruds
 	`
 
 	if len(os.Args) < 2 {
@@ -42,33 +45,32 @@ e.g. fhirscope patient/Observation.rs
 		os.Exit(1)
 	}
 
-	raw := os.Args[1]
+	arg := os.Args[1]
 
-	if raw == "-h" || raw == "--help" {
+	if arg == "-h" || arg == "--help" {
 		fmt.Println(usage)
 		os.Exit(0)
 	}
 
-	if raw == "-v" || raw == "--version" {
-		fmt.Println(version)
+	if arg == "-V" || arg == "--version" {
+		fmt.Println(v)
 		os.Exit(0)
 	}
 
-	scope, err := Parse(raw)
+	scope, err := Parse(arg)
 
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
 
-	jsonScope, err := json.Marshal(scope)
+	out, err := json.MarshalIndent(scope, "", "  ")
 
 	if err != nil {
 		fmt.Println(err)
-		os.Exit(1)
 	}
 
-	fmt.Println(string(jsonScope))
+	fmt.Println(string(out))
 }
 
 func Parse(scope string) (Scope, error) {
@@ -78,7 +80,9 @@ func Parse(scope string) (Scope, error) {
 		return Scope{}, fmt.Errorf("invalid scope: %s", scope)
 	}
 
-	out := Scope{}
+	out := Scope{
+		Params: make(map[string]string),
+	}
 
 	ctx := parts[0]
 
@@ -99,39 +103,66 @@ func Parse(scope string) (Scope, error) {
 		return Scope{}, fmt.Errorf("invalid resource or operation: %s", parts[1])
 	}
 
-	out.Resource = rest[0]
-
-	restWithParams := strings.Split(rest[1], "?")
-
-	if len(restWithParams) > 1 {
-		fmt.Println("params", restWithParams[1])
-		// pairs := strings.Split(params[1], "&")
-	}
-
-	ops := strings.Split(restWithParams[0], "")
-
-	visited := make(map[string]bool)
-
-	for _, op := range ops {
-		if visited[op] {
-			return Scope{}, fmt.Errorf("duplicate operation: %s", op)
+	// resource
+	if rest[0] == Wildcard {
+		out.Resource = Wildcard
+	} else {
+		var found bool
+		for _, resource := range SupportedResources {
+			if resource == rest[0] {
+				out.Resource = resource
+				found = true
+				break
+			}
 		}
-		switch op {
-		case "c":
-			out.Operations = append(out.Operations, CreateOperation)
-		case "r":
-			out.Operations = append(out.Operations, ReadOperation)
-		case "u":
-			out.Operations = append(out.Operations, UpdateOperation)
-		case "d":
-			out.Operations = append(out.Operations, DeleteOperation)
-		case "s":
-			out.Operations = append(out.Operations, SearchOperation)
-		default:
-			return Scope{}, fmt.Errorf("invalid operation expected c, r, u, d or s got: %s", op)
+		if !found {
+			return Scope{}, fmt.Errorf("invalid resource: %s", rest[0])
 		}
 	}
 
+	opsWithParams := strings.Split(rest[1], "?")
+
+	if opsWithParams[0] == Wildcard {
+		// for backwards compatibility with v1
+		out.Operations = append(out.Operations, CreateOperation, ReadOperation, UpdateOperation, DeleteOperation, SearchOperation)
+	} else if opsWithParams[0] == "read" {
+		out.Operations = append(out.Operations, ReadOperation, SearchOperation)
+	} else if opsWithParams[0] == "write" {
+		out.Operations = append(out.Operations, CreateOperation, UpdateOperation, DeleteOperation)
+	} else {
+		ops := strings.Split(opsWithParams[0], "")
+
+		for _, op := range ops {
+			switch op {
+			case "c":
+				out.Operations = append(out.Operations, CreateOperation)
+			case "r":
+				out.Operations = append(out.Operations, ReadOperation)
+			case "u":
+				out.Operations = append(out.Operations, UpdateOperation)
+			case "d":
+				out.Operations = append(out.Operations, DeleteOperation)
+			case "s":
+				out.Operations = append(out.Operations, SearchOperation)
+			default:
+				return Scope{}, fmt.Errorf("invalid operation: %s", op)
+			}
+		}
+	}
+
+	if len(opsWithParams) > 1 {
+		params := strings.Split(opsWithParams[1], "&")
+
+		for _, param := range params {
+			parts := strings.Split(param, "=")
+
+			if len(parts) != 2 {
+				return Scope{}, fmt.Errorf("invalid param: %s", param)
+			}
+
+			out.Params[parts[0]] = parts[1]
+		}
+	}
 	return out, nil
 }
 
@@ -173,4 +204,169 @@ func (o Operation) String() string {
 	default:
 		return ""
 	}
+}
+
+var SupportedResources = []string{
+	"Binary",
+	"Bundle",
+	"CanonicalResource",
+	"CapabilityStatement",
+	"CodeSystem",
+	"Condition",
+	"DomainResource",
+	"Immunization",
+	"Location",
+	"MetadataResource",
+	"Observation",
+	"OperationDefinition",
+	"OperationOutcome",
+	"Organization",
+	"Parameters",
+	"Patient",
+	"Practitioner",
+	"Questionnaire",
+	"QuestionnaireResponse",
+	"RelatedPerson",
+	"Resource",
+	"SearchParameter",
+	"StructureDefinition",
+	"ValueSet",
+	"ActivityDefinition",
+	"AuditEvent",
+	"Composition",
+	"Coverage",
+	"CoverageEligibilityRequest",
+	"CoverageEligibilityResponse",
+	"DocumentReference",
+	"Encounter",
+	"HealthcareService",
+	"ImagingStudy",
+	"ImplementationGuide",
+	"Library",
+	"List",
+	"Measure",
+	"MeasureReport",
+	"Medication",
+	"MedicationRequest",
+	"MedicationStatement",
+	"MessageHeader",
+	"NamingSystem",
+	"PaymentNotice",
+	"PaymentReconciliation",
+	"Person",
+	"PlanDefinition",
+	"PractitionerRole",
+	"Procedure",
+	"Provenance",
+	"RequestOrchestration",
+	"ServiceRequest",
+	"StructureMap",
+	"TestScript",
+	"AllergyIntolerance",
+	"Appointment",
+	"AppointmentResponse",
+	"Basic",
+	"CompartmentDefinition",
+	"ConceptMap",
+	"DiagnosticReport",
+	"Group",
+	"MedicinalProductDefinition",
+	"Schedule",
+	"Slot",
+	"Subscription",
+	"Task",
+	"VisionPrescription",
+	"Account",
+	"AdministrableProductDefinition",
+	"AdverseEvent",
+	"BiologicallyDerivedProduct",
+	"CarePlan",
+	"CareTeam",
+	"Claim",
+	"ClaimResponse",
+	"ClinicalUseDefinition",
+	"Communication",
+	"CommunicationRequest",
+	"Consent",
+	"DetectedIssue",
+	"Device",
+	"Endpoint",
+	"EpisodeOfCare",
+	"ExplanationOfBenefit",
+	"FamilyMemberHistory",
+	"Goal",
+	"GraphDefinition",
+	"GuidanceResponse",
+	"Ingredient",
+	"ManufacturedItemDefinition",
+	"MedicationAdministration",
+	"MedicationDispense",
+	"NutritionOrder",
+	"PackagedProductDefinition",
+	"RegulatedAuthorization",
+	"RiskAssessment",
+	"Specimen",
+	"SubscriptionStatus",
+	"SubscriptionTopic",
+	"Substance",
+	"ActorDefinition",
+	"ArtifactAssessment",
+	"BodyStructure",
+	"ChargeItem",
+	"ChargeItemDefinition",
+	"Citation",
+	"ClinicalImpression",
+	"Contract",
+	"DeviceDefinition",
+	"DeviceMetric",
+	"DeviceRequest",
+	"DeviceUsage",
+	"Evidence",
+	"EvidenceVariable",
+	"ExampleScenario",
+	"Flag",
+	"ImagingSelection",
+	"ImmunizationEvaluation",
+	"ImmunizationRecommendation",
+	"MedicationKnowledge",
+	"MessageDefinition",
+	"MolecularSequence",
+	"NutritionIntake",
+	"NutritionProduct",
+	"ObservationDefinition",
+	"OrganizationAffiliation",
+	"Requirements",
+	"SpecimenDefinition",
+	"SubstanceDefinition",
+	"SupplyDelivery",
+	"SupplyRequest",
+	"TerminologyCapabilities",
+	"TestReport",
+	"Transport",
+	"VerificationResult",
+	"BiologicallyDerivedProductDispense",
+	"ConditionDefinition",
+	"DeviceAssociation",
+	"DeviceDispense",
+	"EncounterHistory",
+	"EnrollmentRequest",
+	"EnrollmentResponse",
+	"EventDefinition",
+	"EvidenceReport",
+	"FormularyItem",
+	"GenomicStudy",
+	"InsurancePlan",
+	"InventoryItem",
+	"InventoryReport",
+	"Invoice",
+	"Linkage",
+	"Permission",
+	"ResearchStudy",
+	"ResearchSubject",
+	"SubstanceNucleicAcid",
+	"SubstancePolymer",
+	"SubstanceProtein",
+	"SubstanceReferenceInformation",
+	"SubstanceSourceMaterial",
+	"TestPlan",
 }
