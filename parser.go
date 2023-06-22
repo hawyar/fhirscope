@@ -103,7 +103,6 @@ func Parse(scope string) (Scope, error) {
 		return Scope{}, fmt.Errorf("invalid resource or operation: %s", parts[1])
 	}
 
-	// resource
 	if rest[0] == Wildcard {
 		out.Resource = Wildcard
 	} else {
@@ -163,6 +162,7 @@ func Parse(scope string) (Scope, error) {
 			out.Params[parts[0]] = parts[1]
 		}
 	}
+
 	return out, nil
 }
 
